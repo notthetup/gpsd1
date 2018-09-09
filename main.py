@@ -1,22 +1,33 @@
 #
 # GPS Daemon for Wemos D1
 #
+import uos as os
+os.dupterm(None, 0)
 
-SIM_UART = True
+LED_PIN = 2
 PORT = 2947
 SSID = "myssid"
 PASS = "lamepassword"
+# FILTER_NMEA = []
+FILTER_NMEA = ["$GPRMC", "$GPGGA", "$GNGGA"]
+UART_DELAY = 0.01
 
+import time
 import uerrno as errno
 import uasyncio as asyncio
+from machine import Pin
+from machine import UART
 
-if not SIM_UART:
-    from machine import UART
-    uart = UART(0, 115200)
-
+pkts = 0
+gmsg = "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\n"
 clients = []
 closed_client = []
-msg = "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\n"
+
+def toggle_led():
+    if led.value() == 1:
+        led.value(0)
+    else:
+        led.value(1)
 
 def do_connect():
     sta_if = network.WLAN(network.STA_IF)
@@ -28,45 +39,50 @@ def do_connect():
             pass
     print('Connected to WiFi', sta_if.ifconfig())
 
-async def handle_echo(reader, writer):
+async def handle_conn(reader, writer):
     clients.append(tuple([reader, writer]))
     print("Client connected", );
 
 async def periodic():
     while True:
-        yield from sendToAllClients(msg,clients)
-        yield from asyncio.sleep(5)
+        await sendToAllClients(gmsg,clients)
+        await asyncio.sleep(0.01)
 
 async def sendToAllClients(msg, clients):
     for client in clients:
         try:
-            yield from client[1].awrite(msg)
+            await client[1].awrite(msg)
         except OSError as e:
             if e.args[0] == errno.ECONNRESET or e.args[0] == errno.EPIPE:
                 client[1].aclose()
                 closed_client.append(client)
     clients = [client for client in clients if client not in closed_client]
-    print("Total active clients", len(clients));
 
 async def receiver():
     sreader = asyncio.StreamReader(uart)
     while True:
         res = await sreader.readline()
         if (res):
-           sendToAllClients(res, clients)
+            res_str = res.decode('utf-8')
+            if len(FILTER_NMEA) == 0 or any(nmea for nmea in FILTER_NMEA if res_str.startswith(nmea)):
+                await sendToAllClients(res_str, clients)
+                toggle_led()
+        await asyncio.sleep(UART_DELAY)
 
+# do_connect()
+uart = UART(0, 9600);
 loop = asyncio.get_event_loop()
+led = Pin(LED_PIN,Pin.OUT)
+led.value(1)
+time.sleep(1)
+led.value(0)
 
-if not SIM_UART:
-    rec_coro = loop.create_task(receiver())
-else:
-    rec_coro = loop.create_task(periodic())
-
-server_coro = asyncio.start_server(handle_echo, '0.0.0.0', PORT)
-server = loop.run_until_complete(server_coro)
+rec_coro = loop.create_task(receiver())
+# rec_coro = loop.create_task(periodic())
+server_coro = asyncio.start_server(handle_conn, '0.0.0.0', PORT)
+server = loop.call_soon(server_coro)
 
 # Serve requests until Ctrl+C is pressed
-print('Serving on {}'.format(server.sockets[0].getsockname()))
 try:
     loop.run_forever()
 except KeyboardInterrupt:
