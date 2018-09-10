@@ -19,7 +19,6 @@ from machine import Pin
 from machine import UART
 
 pkts = 0
-gmsg = "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\n"
 clients = []
 closed_client = []
 
@@ -42,11 +41,6 @@ def do_connect():
 async def handle_conn(reader, writer):
     clients.append(tuple([reader, writer]))
     print("Client connected", );
-
-async def periodic():
-    while True:
-        await sendToAllClients(gmsg,clients)
-        await asyncio.sleep(0.01)
 
 async def sendToAllClients(msg, clients):
     for client in clients:
@@ -78,7 +72,6 @@ time.sleep(1)
 led.value(0)
 
 rec_coro = loop.create_task(receiver())
-# rec_coro = loop.create_task(periodic())
 server_coro = asyncio.start_server(handle_conn, '0.0.0.0', PORT)
 server = loop.call_soon(server_coro)
 
